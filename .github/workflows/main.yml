@@ -1,86 +1,49 @@
-name: Deploy to Hostinger (Dev)
+name: Deploy To Development Server
 
 on:
   push:
     branches:
-      - dev
-  workflow_dispatch:
-
-permissions:
-  contents: read
+    - dev
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
-    env:
-      # Change these only if you have a special dev subfolder on your hosting
-      REMOTE_DIR: ${{ secrets.HOSTINGER_REMOTE_PATH_DEV || '/public_html/dev' }}
-
+    runs-on: ubuntu-latest #test_deploy_v1
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      # (Optional) Frontend build if package.json exists (React/Vite/Next etc.)
-      - name: Set up Node
-        if: hashFiles('package.json') != ''
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
 
-      - name: Install Node dependencies
-        if: hashFiles('package.json') != ''
-        run: npm ci
+    - name: Install dependencies
+      run: npm install
 
-      - name: Build Frontend
-        if: hashFiles('package.json') != ''
-        run: |
-          if [ -f "vite.config.ts" ] || [ -f "vite.config.js" ]; then
-            npm run build
-          elif [ -f "react-app-env.d.ts" ] || [ -d "src" ]; then
-            npm run build
-          else
-            echo "No known frontend build detected, skipping."
-          fi
+    - name: Build application
+      run: npm run build
+      env:
+        CI: true
+        VITE_API_BASE_URL: ${{ secrets.DEV_VITE_API_BASE_URL }}
+        VITE_SECRET_KEY: ${{ secrets.DEV_VITE_SECRET_KEY }}
 
-      # (Optional) PHP/Laravel dependencies if composer.json exists
-      - name: Set up PHP
-        if: hashFiles('composer.json') != ''
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.2'
-
-      - name: Install Composer dependencies (no dev)
-        if: hashFiles('composer.json') != ''
-        run: |
-          composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
-          php -v && composer -V
-
-      # Choose what to upload:
-      # If a "dist" or "build" directory exists (typical for Vite/React), upload that.
-      # Otherwise upload the whole repo (use .ftpignore to exclude files like node_modules, .git etc.).
-      - name: Decide upload directory
-        id: setdir
-        run: |
-          if [ -d "dist" ]; then
-            echo "dir=dist" >> $GITHUB_OUTPUT
-          elif [ -d "build" ]; then
-            echo "dir=build" >> $GITHUB_OUTPUT
-          else
-            echo "dir=." >> $GITHUB_OUTPUT
-          fi
-
-      - name: Deploy to Hostinger via FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4
-        with:
-          server: ${{ secrets.HOSTINGER_FTP_SERVER }}
-          username: ${{ secrets.HOSTINGER_FTP_USERNAME }}
-          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          local-dir: ${{ steps.setdir.outputs.dir }}
-          server-dir: ${{ env.REMOTE_DIR }}
-          exclude: |
-            **/.git*
-            **/.github/**
-            **/node_modules/**
-            **/vendor/**        # remove this line if you want to upload vendor
-            **/.env
-            **/.DS_Store
+    - name: Remove the dist folder from VPS
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.DEV_VPS_HOST }}
+        username: ${{ secrets.DEV_VPS_USERNAME }}
+        password: ${{ secrets.DEV_VPS_PASSWORD }}
+        script: |
+          cd ${{ secrets.DEV_APP_PATH }}
+          rm -r dist
+    
+    - name: Deploy To VPS
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.DEV_VPS_HOST }}
+        username: ${{ secrets.DEV_VPS_USERNAME }}
+        password: ${{ secrets.DEV_VPS_PASSWORD }}
+        source: "dist/"
+        target: ${{ secrets.DEV_APP_PATH }}
